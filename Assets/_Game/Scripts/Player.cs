@@ -1,5 +1,8 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using Unity.VisualScripting;
+using UnityEditor.PackageManager;
 using UnityEngine;
 
 public class Player : MonoBehaviour
@@ -7,13 +10,18 @@ public class Player : MonoBehaviour
     [SerializeField] private float speed;
     [SerializeField] private LayerMask wallLayer;
     [SerializeField] private GameObject brickPrefab;
-    [SerializeField] private GameObject playerVisual;
+    
+    public GameObject playerVisual;
+    private List<PlayerBrick> brickList = new();
+    public List<PlayerBrick> BrickList { get { return brickList; } }
 
+    private enum PushPivotDirection { Forward, Right }
+    private PushPivotDirection pushPivotDirection;
     private Vector2 startMousePos;
     private Vector2 endMousePos;
     private bool reachedTarget = true;
-    private List<PlayerBrick> brickList = new List<PlayerBrick>();
-
+    private IEnumerator moveCoroutine;
+    
     private void Update()
     {
         if (reachedTarget)
@@ -38,39 +46,74 @@ public class Player : MonoBehaviour
                 {
                     if (startMousePos.x > endMousePos.x)
                     {
-                        StartCoroutine(Move(Vector3.right, Vector3.left));
+                        moveCoroutine = Move(Vector3.right);
                     }
                     if (startMousePos.x < endMousePos.x)
                     {
-                        StartCoroutine(Move(Vector3.left, Vector3.right));
+                        moveCoroutine = Move(Vector3.left);
                     }
                 }
                 else
                 {
                     if (startMousePos.y > endMousePos.y)
                     {
-                        StartCoroutine(Move(Vector3.forward, Vector3.back));
+                        moveCoroutine = Move(Vector3.forward);
                     }
                     if (startMousePos.y < endMousePos.y)
                     {
-                        StartCoroutine(Move(Vector3.back, Vector3.forward));
+                        moveCoroutine = Move(Vector3.back);
                     }
                 }
+                StartCoroutine(moveCoroutine);
             }
         }
     }
-    private IEnumerator Move(Vector3 direction, Vector3 offset)
+    private IEnumerator Move(Vector3 direction)
     {
         reachedTarget = false;
-        if (Physics.Raycast(transform.position, direction, out RaycastHit hitInfo, 100f, wallLayer))
+        if (Physics.Raycast(transform.position, direction, out RaycastHit hitInfo, 100f, wallLayer)) //If hit a wall
         {
-            while (Vector3.Distance(transform.position, hitInfo.transform.position + offset) > 0.1f)
+            CheckPushPivotDirection(hitInfo);
+            Vector3 offset = - direction;
+            
+            while (Vector3.Distance(transform.position, hitInfo.transform.position + offset) > 0.1f) //Moving to the target
             {
                 transform.position = Vector3.MoveTowards(transform.position, hitInfo.transform.position + offset, speed * Time.deltaTime);
-                yield return new WaitForSeconds(Time.deltaTime);            
+                yield return null;            
             }
+            transform.position = hitInfo.transform.position + offset;
         }
         reachedTarget = true;
+    }
+    private void CheckPushPivotDirection(RaycastHit hitInfo)
+    {
+        if (hitInfo.collider.CompareTag("WallForward"))
+        {
+            pushPivotDirection = PushPivotDirection.Forward;
+        }
+        if (hitInfo.collider.CompareTag("WallRight"))
+        {
+            pushPivotDirection = PushPivotDirection.Right;
+        }
+    }
+    private void AddBrick()
+    {
+        PlayerBrick playerBrick = Instantiate(brickPrefab, transform.position, Quaternion.Euler(-90, 0, 180)).GetComponent<PlayerBrick>();
+        playerBrick.OnInit(this);
+        UIManager.Instance.SetScore(brickList.Count);
+
+    }
+    private void RemoveBrick()
+    {    
+        brickList[^1].OnDespawn(this);
+        UIManager.Instance.SetScore(brickList.Count);
+    }
+    public void ClearBrick()
+    {
+        foreach (PlayerBrick brick in brickList.ToList())
+        {
+            brick.OnDespawn(this);
+        }
     }
     private void OnTriggerEnter(Collider other)
     {
@@ -78,28 +121,27 @@ public class Player : MonoBehaviour
         {
             AddBrick();
         }
+        if (other.TryGetComponent<PivotSlide>(out PivotSlide pivotSlide))
+        {
+            if (brickList.Count > 0 && !pivotSlide.Slided)
+            {
+                RemoveBrick();
+                UIManager.Instance.SetScore(brickList.Count);
+            }
+        }
     }
     private void OnTriggerStay(Collider other)
     {
-        if (reachedTarget && other.CompareTag("Pivot Push"))
+        if (other.CompareTag("Pivot Push") && reachedTarget)
         {
-            StartCoroutine(Move(-other.transform.forward, other.transform.forward));
+            if (pushPivotDirection == PushPivotDirection.Forward)
+            {
+                StartCoroutine(Move(-other.transform.forward));
+            }
+            else if (pushPivotDirection == PushPivotDirection.Right)
+            {
+                StartCoroutine(Move(-other.transform.right));
+            }
         }
-    }
-    private void AddBrick()
-    {
-        Vector3 offset = new(0f, 0.5f * brickList.Count, 0f);
-        PlayerBrick playerBrick = Instantiate(brickPrefab, transform.position + offset, Quaternion.Euler(-90, 0, 180)).GetComponent<PlayerBrick>();
-        playerBrick.OnInit(playerVisual.transform);
-        brickList.Add(playerBrick);
-        playerBrick.transform.SetParent(transform);
-    }
-    private void RemoveBrick()
-    {
-        brickList.RemoveAt(brickList.Count - 1);
-    }
-    private void ClearBrick()
-    {
-
     }
 }
